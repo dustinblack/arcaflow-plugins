@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.9
+#!/usr/bin/env python3
 
 import sys
 import traceback
@@ -22,6 +22,12 @@ class InputParams:
     kubeconfig: str
     #operator_repo: str = "https://github.com/cloud-bulldozer/benchmark-operator.git"
     #operator_branch: str = "v1.0.1"
+
+
+@dataclass
+class CustomResource:
+    customresource: str
+    kubeconfig: str
 
 
 @dataclass
@@ -125,9 +131,50 @@ def stop_benchmark_operator(params: InputParams) -> typing.Tuple[str, typing.Uni
     return "success", SuccessOutput("Benchmark Operator successfully removed!")
 
 
+# The following is a decorator (starting with @). We add this in front of our function to define the metadata for our
+# step.
+@plugin.step(
+    id="cr",
+    name="Deploy a CR File",
+    description="Passes a CR file to the benchmark-operator to start a benchmark",
+    outputs={"success": SuccessOutput, "error": ErrorOutput},
+)
+def deploy_cr(params: CustomResource) -> typing.Tuple[str, typing.Union[SuccessOutput, ErrorOutput]]:
+
+    kubeconfig_file = tempfile.mkstemp()
+
+    print("==>> Importing kubeconfig...")
+    with open(kubeconfig_file[1], 'w') as file:
+        file.write(params.kubeconfig)
+
+    cr_file = tempfile.mkstemp()
+
+    print("==>> Importing CR...")
+    with open(cr_file[1], 'w') as file:
+        file.write(params.customresource)
+
+    ripsaw_cmd = [
+        "kubectl",
+        "apply",
+        "-f",
+        cr_file[1]
+    ]
+
+    print("==>> Starting benchmark...")
+    try:
+        print(subprocess.check_output(ripsaw_cmd, cwd="/", env={"KUBECONFIG": kubeconfig_file[1]},
+            text=True, stderr=subprocess.STDOUT))
+    except subprocess.CalledProcessError as error:
+        return "error", ErrorOutput("{} failed with return code {}:\n{}".format(error.cmd[0], error.returncode, error.output))
+
+    print("==>> Benchmark Run Complete!")
+    return "success", SuccessOutput("Benchmark successfully run!")
+
+
 if __name__ == "__main__":
     sys.exit(plugin.run(plugin.build_schema(
         # List your step functions here:
         start_benchmark_operator,
         stop_benchmark_operator,
+        deploy_cr
     )))
